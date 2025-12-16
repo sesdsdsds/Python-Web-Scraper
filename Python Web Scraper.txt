@@ -1,0 +1,120 @@
+import requests
+from bs4 import BeautifulSoup
+import csv
+import argparse
+import time
+from datetime import datetime
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class ProductScraper:
+    def __init__(self, url, product_item_selector, name_selector, price_selector, csv_filename=None):
+        self.url = url
+        self.product_item_selector = product_item_selector
+        self.name_selector = name_selector
+        self.price_selector = price_selector
+        self.csv_filename = csv_filename or f"products_{datetime.now().strftime('%Y%m%d')}.csv"
+        self.session = requests.Session()
+        self.session.timeout = 10  # Set timeout
+        
+    def scrape(self, retries=3):
+        """Main scraping function with retry logic."""
+        for attempt in range(retries):
+            try:
+                response = self.session.get(self.url)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                products = []
+                
+                # Find all product items
+                items = soup.select(self.product_item_selector)
+                logging.info(f"Found {len(items)} product items")
+                
+                # Extract data from each item
+                for i, item in enumerate(items[:10]):  # Limit for demo
+                    product_data = self._extract_product(item)
+                    if product_data:
+                        products.append(product_data)
+                        # Show progress
+                        if i % 5 == 0:
+                            logging.info(f"Processed {i}/{len(items)} items")
+                
+                self._save_to_csv(products)
+                self._display_summary(products)
+                return products
+                
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Request error (attempt {attempt+1}/{retries}): {e}")
+                if attempt < retries - 1:
+                    time.sleep(2)  # Wait before retry
+                    
+        logging.error("Failed after all retries")
+        return []
+    
+    def _extract_product(self, item):
+        """Extract product data safely."""
+        try:
+            # Get name
+            name_tag = item.select_one(self.name_selector)
+            name = name_tag.text.strip() if name_tag else 'N/A'
+            
+            # Get price
+            price_tag = item.select_one(self.price_selector)
+            price = price_tag.text.strip() if price_tag else 'N/A'
+            
+            return {
+                'name': name,
+                'price': price
+            }
+        except Exception as e:
+            logging.error(f"Error extracting product: {e}")
+            return None
+    
+    def _save_to_csv(self, data):
+        """Save data to CSV."""
+        try:
+            with open(self.csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=['name', 'price'])
+                writer.writeheader()
+                writer.writerows(data)
+            logging.info(f"Saved {len(data)} products to {self.csv_filename}")
+        except Exception as e:
+            logging.error(f"CSV save error: {e}")
+    
+    def _display_summary(self, data):
+        """Display summary info."""
+        print("\n=== Scraping Summary ===")
+        print(f"URL: {self.url}")
+        print(f"Products found: {len(data)}")
+        print(f"File saved: {self.csv_filename}")
+        
+        # Show sample data
+        print("\nSample data (first 3 items):")
+        for i, item in enumerate(data[:3]):
+            print(f"{i+1}. {item['name']} - {item['price']}")
+        print("========================\n")
+
+def main():
+    parser = argparse.ArgumentParser(description="Product Scraper")
+    parser.add_argument("--url", required=True, help="Website URL to scrape")
+    parser.add_argument("--item", default=".product-item", help="CSS selector for product items")
+    parser.add_argument("--name", default=".product-name", help="CSS selector for product name")
+    parser.add_argument("--price", default=".product-price", help="CSS selector for product price")
+    parser.add_argument("--output", help="CSV output filename")
+    args = parser.parse_args()
+    
+    scraper = ProductScraper(
+        url=args.url,
+        product_item_selector=args.item,
+        name_selector=args.name,
+        price_selector=args.price,
+        csv_filename=args.output
+    )
+    
+    scraper.scrape()
+
+if __name__ == "__main__":
+    main()
